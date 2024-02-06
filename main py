@@ -1,0 +1,109 @@
+import requests
+from bs4 import BeautifulSoup
+import csv
+from dataclasses import dataclass, field
+from urllib.parse import urlparse, urljoin
+import os
+
+
+@dataclass
+class PageContent:
+    title: str
+    excerpt: str = ''
+    content: str = ''
+    author: str = ''
+    featured_image: str = ''
+    post_type: str = 'post'
+    post_meta: dict = field(default_factory=dict)
+    categories: list = field(default_factory=list)
+    tags: list = field(default_factory=list)
+    publish_date: str = ''
+    updated_date: str = ''
+    status: str = 'publish'
+    seo_meta: dict = field(default_factory=dict)
+
+class WebsiteCrawler:
+    def __init__(self, base_url):
+        self.base_url = base_url
+        self.visited_urls = set()
+        self.to_visit_urls = set([base_url])
+
+    def fetch_content(self, url):
+        response = requests.get(url)
+        return response.content
+
+    def crawl(self, limit=50):
+        crawled_pages = []
+        while self.to_visit_urls and len(crawled_pages) < limit:
+            url = self.to_visit_urls.pop()
+            print(f"Crawling: {url}")
+            try:
+                content = self.fetch_content(url)
+                soup = BeautifulSoup(content, 'html.parser')
+                crawled_pages.append(self.parse_page(soup))
+                self.visited_urls.add(url)
+                self.find_internal_links(soup, url)
+            except Exception as e:
+                print(f"Failed to crawl {url}: {e}")
+        return crawled_pages
+
+    def find_internal_links(self, soup, current_url):
+        for link in soup.find_all('a', href=True):
+            url = link['href']
+            if self.is_internal_link(url):
+                full_url = urljoin(current_url, url)
+                if full_url not in self.visited_urls:
+                    self.to_visit_urls.add(full_url)
+
+    def is_internal_link(self, link):
+        return urlparse(link).netloc == '' or urlparse(link).netloc == urlparse(self.base_url).netloc
+
+    def parse_page(self, soup):
+        title = soup.title.string if soup.title else ''
+        content = soup.find('main') or soup.find(id='main-content') or soup.find('article')
+        content = content.get_text(strip=True) if content else ''
+
+        seo_meta = {
+            'description': soup.find('meta', attrs={'name': 'description'})['content'] if soup.find('meta', attrs={'name': 'description'}) else '',
+            'keywords': soup.find('meta', attrs={'name': 'keywords'})['content'] if soup.find('meta', attrs={'name': 'keywords'}) else ''
+        }
+
+        return PageContent(title=title, content=content, seo_meta=seo_meta)
+
+def write_to_csv(page_contents, filename):
+    with open(filename, mode='w', newline='', encoding='utf-8') as file:
+        writer = csv.writer(file)
+        writer.writerow(['Title', 'Excerpt', 'Content', 'Author', 'Featured Image', 'Post Type', 'Post Meta', 'Categories', 'Tags', 'Publish Date', 'Updated Date', 'Status', 'SEO Description', 'SEO Keywords'])
+
+        for content in page_contents:
+            writer.writerow([
+                content.title,
+                content.excerpt,
+                content.content,
+                content.author,
+                content.featured_image,
+                content.post_type,
+                '; '.join([f"{k}: {v}" for k, v in content.post_meta.items()]),
+                ', '.join(content.categories),
+                ', '.join(content.tags),
+                content.publish_date,
+                content.updated_date,
+                content.status,
+                content.seo_meta.get('description', ''),
+                content.seo_meta.get('keywords', '')
+            ])
+
+def main():
+    start_url = input("Enter the website or sitemap URL: ")
+    if 'sitemap' in start_url:
+        # Handle sitemap logic here (use the existing SitemapParser class)
+        pass
+    else:
+        crawler = WebsiteCrawler(start_url)
+        crawled_pages = crawler.crawl()
+        filename = f'{urlparse(start_url).netloc.replace(".", "_")}.csv'
+        write_to_csv(crawled_pages, filename)
+        print(f"Data has been saved to {filename}")
+
+if __name__ == "__main__":
+    main()
